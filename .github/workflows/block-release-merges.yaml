@@ -50,23 +50,49 @@ jobs:
             exit 0
           fi
 
-          # Check if the latest commit is a merge commit
-          if git rev-parse HEAD^2 >/dev/null 2>&1; then
-            echo "This is a merge commit"
+          # Get all commits in this push
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          echo "Checking commits from $BEFORE to $AFTER"
+
+          # Get list of all commit SHAs in this push
+          COMMITS=$(git rev-list $BEFORE..$AFTER 2>/dev/null || git rev-list $AFTER)
+
+          if [[ -z "$COMMITS" ]]; then
+            echo "No commits to check"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          INVALID_MERGES=""
+
+          # Check each commit
+          while IFS= read -r COMMIT; do
+            echo "Checking commit: $COMMIT"
             
-            # Get the source branch from merge commit message
-            MERGE_MSG=$(git log -1 --pretty=%B)
-            echo "Merge message: $MERGE_MSG"
-            
-            # Check if merged from a release branch
-            if echo "$MERGE_MSG" | grep -qE "Merge.*release/"; then
-              echo "⚠️ Invalid merge detected: release branch merged into non-main branch"
-              echo "revert=true" >> $GITHUB_OUTPUT
-            else
-              echo "skip=true" >> $GITHUB_OUTPUT
+            # Check if this commit is a merge commit
+            if git rev-parse $COMMIT^2 >/dev/null 2>&1; then
+              echo "  ↳ This is a merge commit"
+              
+              # Get the source branch from merge commit message
+              MERGE_MSG=$(git log -1 --pretty=%B $COMMIT)
+              echo "  ↳ Merge message: $MERGE_MSG"
+              
+              # Check if merged from a release branch
+              if echo "$MERGE_MSG" | grep -qE "Merge.*release/"; then
+                echo "  ↳ ⚠️ Invalid merge detected: release branch merged into non-main branch"
+                INVALID_MERGES="$INVALID_MERGES $COMMIT"
+              fi
             fi
+          done <<< "$COMMITS"
+
+          if [[ -n "$INVALID_MERGES" ]]; then
+            echo "revert=true" >> $GITHUB_OUTPUT
+            echo "commits<<EOF" >> $GITHUB_OUTPUT
+            echo "$INVALID_MERGES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
           else
-            echo "Not a merge commit"
             echo "skip=true" >> $GITHUB_OUTPUT
           fi
 
@@ -76,10 +102,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          echo "🔄 Reverting merge commit..."
-          git revert -m 1 HEAD --no-edit
+          INVALID_COMMITS="${{ steps.check.outputs.commits }}"
+
+          echo "🔄 Reverting invalid merge commits..."
+          echo "Commits to revert: $INVALID_COMMITS"
+
+          # Revert each invalid merge commit (in reverse order, newest first)
+          for COMMIT in $INVALID_COMMITS; do
+            echo "Reverting merge commit: $COMMIT"
+            git revert -m 1 $COMMIT --no-edit || {
+              echo "Failed to revert $COMMIT, attempting to continue..."
+            }
+          done
 
           git push origin HEAD
 
-          echo "✅ Merge reverted: Release branches can only be merged into 'main'"
+          echo "✅ Invalid merges reverted: Release branches can only be merged into 'main'"
           exit 1
