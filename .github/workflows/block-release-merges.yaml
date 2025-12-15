@@ -14,7 +14,7 @@ jobs:
           echo "Head: ${{ github.head_ref }}"
 
           # Block: release/* → anything except master
-          if [[ "${{ github.head_ref }}" == release/* && "${{ github.base_ref }}" != "master" ]]; then
+          if [[ "${{ github.base_ref }}" == release/* && "${{ github.head_ref }}" != "master" ]]; then
             echo "❌ Merging release branches into feature branches is not allowed."
             exit 1
           fi
