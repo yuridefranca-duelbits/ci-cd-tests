@@ -20,7 +20,7 @@ jobs:
           echo "Head: ${{ github.head_ref }}"
 
           # Block: release/* → anything except main
-          if [[ "${{ github.base_ref }}" == release/* && "${{ github.head_ref }}" != "main" ]]; then
+          if [[ "${{ github.head_ref }}" == release/* && "${{ github.base_ref }}" != "main" ]]; then
             echo "❌ Merging release branches into feature branches is not allowed."
             echo "❌ Release branches can only be merged into 'main'."
             exit 1
