@@ -21,8 +21,19 @@ jobs:
 
           # Block: release/* → anything except main
           if [[ "${{ github.head_ref }}" == release/* && "${{ github.base_ref }}" != "main" ]]; then
+            # Check for bypass checkbox in PR body
+            PR_BODY="${{ github.event.pull_request.body }}"
+            
+            # Check if "Allow release merges Bypass" checkbox is checked
+            if echo "$PR_BODY" | grep -qiE "\[x\].*[Aa]llow release merges? [Bb]ypass"; then
+              echo "⚠️ Bypass detected: 'Allow release merges Bypass' checkbox is checked"
+              echo "✅ Allowing merge from release branch"
+              exit 0
+            fi
+            
             echo "❌ Merging release branches into feature branches is not allowed."
             echo "❌ Release branches can only be merged into 'main'."
+            echo "💡 To bypass this check, check the '[ ] Allow release merges Bypass' checkbox in the PR description"
             exit 1
           fi
 
@@ -81,8 +92,13 @@ jobs:
               
               # Check if merged from a release branch
               if echo "$MERGE_MSG" | grep -qE "Merge.*release/"; then
-                echo "  ↳ ⚠️ Invalid merge detected: release branch merged into non-main branch"
-                INVALID_MERGES="$INVALID_MERGES $COMMIT"
+                # Check for bypass marker
+                if echo "$MERGE_MSG" | grep -qE "\[allow-release-merge\]|\[bypass\]"; then
+                  echo "  ↳ ✅ Bypass detected in commit message, allowing merge"
+                else
+                  echo "  ↳ ⚠️ Invalid merge detected: release branch merged into non-main branch"
+                  INVALID_MERGES="$INVALID_MERGES $COMMIT"
+                fi
               fi
             fi
           done <<< "$COMMITS"
