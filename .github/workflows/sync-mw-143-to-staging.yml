@@ -1,0 +1,105 @@
+name: Sync MW-143-FE-prerequisite into staging
+
+on:
+  schedule:
+    # Weekdays at 08:00 (UTC-3 = 11:00 UTC) - Create PR
+    - cron: "0 14 35 * 1-5"
+    # Weekdays at 23:00 (UTC-3 = 02:00 UTC next day) - Merge PR
+    - cron: "0 14 45 * 2-6"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to perform"
+        required: true
+        type: choice
+        options:
+          - create
+          - merge
+        default: create
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate GitHub CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Determine action
+        id: action
+        run: |
+          # For workflow_dispatch, use the input
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "mode=${{ inputs.action }}" >> $GITHUB_OUTPUT
+          else
+            # For schedule: 11:00 UTC = create, 02:00 UTC = merge
+            HOUR=$(date -u +%H)
+            if [[ "$HOUR" == "11" ]]; then
+              echo "mode=create" >> $GITHUB_OUTPUT
+            else
+              echo "mode=merge" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Check if PR already exists
+        id: pr_check
+        run: |
+          PR_NUMBER=$(gh pr list \
+            --base staging \
+            --head MW-143-FE-prerequisite \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')
+
+          echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+          if [[ -n "$PR_NUMBER" ]]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create PR
+        if: steps.action.outputs.mode == 'create' && steps.pr_check.outputs.exists == 'false'
+        run: |
+          CURRENT_DATE=$(date -u '+%Y-%m-%d')
+          gh pr create \
+            --base staging \
+            --head MW-143-FE-prerequisite \
+            --title "Sync MW-143-FE-prerequisite → staging ($CURRENT_DATE)" \
+            --body "Automated sync PR created by GitHub Actions on $CURRENT_DATE."
+
+          echo "✅ PR created successfully"
+
+      - name: Merge PR
+        if: steps.action.outputs.mode == 'merge' && steps.pr_check.outputs.exists == 'true'
+        run: |
+          PR_NUMBER="${{ steps.pr_check.outputs.number }}"
+
+          echo "Merging PR #$PR_NUMBER"
+
+          gh pr merge $PR_NUMBER \
+            --merge \
+            --delete-branch=false \
+            --admin
+
+          echo "✅ PR merged successfully"
+
+      - name: No action needed
+        if: |
+          (steps.action.outputs.mode == 'create' && steps.pr_check.outputs.exists == 'true') ||
+          (steps.action.outputs.mode == 'merge' && steps.pr_check.outputs.exists == 'false')
+        run: |
+          if [[ "${{ steps.action.outputs.mode }}" == "create" ]]; then
+            echo "ℹ️ PR already exists, skipping creation"
+          else
+            echo "ℹ️ No open PR found to merge"
+          fi
