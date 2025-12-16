@@ -3,9 +3,9 @@ name: Sync MW-143-FE-prerequisite into staging
 on:
   schedule:
     # Weekdays at 11:40 (UTC-3 = 14:40 UTC) - Create PR
-    - cron: "50 14 * * 1-5"
+    - cron: "50 16 * * 1-5"
     # Weekdays at 11:45 (UTC-3 = 14:45 UTC) - Merge PR
-    - cron: "55 14 * * 1-5"
+    - cron: "55 16 * * 1-5"
   workflow_dispatch:
     inputs:
       action:
