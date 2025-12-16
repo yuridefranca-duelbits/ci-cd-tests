@@ -2,10 +2,10 @@ name: Sync MW-143-FE-prerequisite into staging
 
 on:
   schedule:
-    # Weekdays at 08:00 (UTC-3 = 11:00 UTC) - Create PR
-    - cron: "0 14 35 * 1-5"
-    # Weekdays at 23:00 (UTC-3 = 02:00 UTC next day) - Merge PR
-    - cron: "0 14 45 * 2-6"
+    # Weekdays at 11:40 (UTC-3 = 14:40 UTC) - Create PR
+    - cron: "40 14 * * 1-5"
+    # Weekdays at 11:45 (UTC-3 = 14:45 UTC) - Merge PR
+    - cron: "45 14 * * 1-5"
   workflow_dispatch:
     inputs:
       action:
@@ -40,9 +40,9 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "mode=${{ inputs.action }}" >> $GITHUB_OUTPUT
           else
-            # For schedule: 11:00 UTC = create, 02:00 UTC = merge
-            HOUR=$(date -u +%H)
-            if [[ "$HOUR" == "11" ]]; then
+            # For schedule: 14:40 UTC = create, 14:45 UTC = merge
+            MINUTE=$(date -u +%M)
+            if [[ "$MINUTE" == "40" ]]; then
               echo "mode=create" >> $GITHUB_OUTPUT
             else
               echo "mode=merge" >> $GITHUB_OUTPUT
