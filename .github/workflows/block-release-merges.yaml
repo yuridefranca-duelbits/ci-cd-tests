@@ -3,9 +3,15 @@ name: Block release → feature merges
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - "**"
+      - "!main"
+      - "!release/**"
 
 jobs:
   block-release-into-feature:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Validate merge source
@@ -13,8 +19,103 @@ jobs:
           echo "Base: ${{ github.base_ref }}"
           echo "Head: ${{ github.head_ref }}"
 
-          # Block: release/* → anything except master
-          if [[ "${{ github.head_ref }}" == release/* && "${{ github.base_ref }}" != "master" ]]; then
+          # Block: release/* → anything except main
+          if [[ "${{ github.head_ref }}" == release/* && "${{ github.base_ref }}" != "main" ]]; then
             echo "❌ Merging release branches into feature branches is not allowed."
+            echo "❌ Release branches can only be merged into 'main'."
             exit 1
           fi
+
+  revert-invalid-merge:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if merge came from release branch
+        id: check
+        run: |
+          # Get the current branch name
+          CURRENT_BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "Current branch: $CURRENT_BRANCH"
+
+          # Skip if this is main (shouldn't happen due to branch filter)
+          if [[ "$CURRENT_BRANCH" == "main" ]]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get all commits in this push
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          echo "Checking commits from $BEFORE to $AFTER"
+
+          # Get list of all commit SHAs in this push
+          COMMITS=$(git rev-list $BEFORE..$AFTER 2>/dev/null || git rev-list $AFTER)
+
+          if [[ -z "$COMMITS" ]]; then
+            echo "No commits to check"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          INVALID_MERGES=""
+
+          # Check each commit
+          while IFS= read -r COMMIT; do
+            echo "Checking commit: $COMMIT"
+            
+            # Check if this commit is a merge commit
+            if git rev-parse $COMMIT^2 >/dev/null 2>&1; then
+              echo "  ↳ This is a merge commit"
+              
+              # Get the source branch from merge commit message
+              MERGE_MSG=$(git log -1 --pretty=%B $COMMIT)
+              echo "  ↳ Merge message: $MERGE_MSG"
+              
+              # Check if merged from a release branch
+              if echo "$MERGE_MSG" | grep -qE "Merge.*release/"; then
+                echo "  ↳ ⚠️ Invalid merge detected: release branch merged into non-main branch"
+                INVALID_MERGES="$INVALID_MERGES $COMMIT"
+              fi
+            fi
+          done <<< "$COMMITS"
+
+          if [[ -n "$INVALID_MERGES" ]]; then
+            echo "revert=true" >> $GITHUB_OUTPUT
+            echo "commits<<EOF" >> $GITHUB_OUTPUT
+            echo "$INVALID_MERGES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Revert invalid merge
+        if: steps.check.outputs.revert == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          INVALID_COMMITS="${{ steps.check.outputs.commits }}"
+
+          echo "🔄 Reverting invalid merge commits..."
+          echo "Commits to revert: $INVALID_COMMITS"
+
+          # Revert each invalid merge commit (in reverse order, newest first)
+          for COMMIT in $INVALID_COMMITS; do
+            echo "Reverting merge commit: $COMMIT"
+            git revert -m 1 $COMMIT --no-edit || {
+              echo "Failed to revert $COMMIT, attempting to continue..."
+            }
+          done
+
+          git push origin HEAD
+
+          echo "✅ Invalid merges reverted: Release branches can only be merged into 'main'"
+          exit 1
